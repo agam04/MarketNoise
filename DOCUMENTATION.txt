@@ -1,0 +1,307 @@
+================================================================================
+                   MarketNoise — Project Documentation
+================================================================================
+
+WHAT IS MARKETNOISE?
+================================================================================
+
+MarketNoise is a narrative analysis platform for retail investors. It scrapes
+news and social media from multiple sources, analyzes sentiment with NLP,
+tracks how fast narratives are spreading, scores hype risk, and — ultimately —
+uses machine learning to predict how news will impact stock prices.
+
+The core idea: most retail investors see a headline and react emotionally.
+MarketNoise replaces gut feelings with data-driven explanations of WHY
+attention is shifting and WHETHER that attention is abnormal.
+
+We do NOT predict prices or give trading advice. We help users understand
+the narratives moving markets.
+
+
+THE PROBLEM WE SOLVE
+================================================================================
+
+1. Information overload — thousands of articles, Reddit posts, and tweets
+   daily about any popular stock. No way to process it all manually.
+
+2. Hype vs. signal — retail investors can't distinguish meaningful news
+   (earnings, FDA approvals, lawsuits) from hype (memes, pump-and-dump,
+   fear-mongering clickbait).
+
+3. No narrative context — existing tools show price charts and basic
+   sentiment (bullish/bearish), but don't explain WHY sentiment shifted
+   or how fast narratives are accelerating.
+
+4. Reactive, not proactive — by the time retail investors see trending
+   news, institutional traders have already acted on it. We aim to
+   surface narrative shifts early, before they become mainstream.
+
+
+ARCHITECTURE OVERVIEW
+================================================================================
+
+  +-----------+     +------------------+     +------------------+     +---------+
+  |  Frontend |     |     Backend      |     | Analytics Layer  |     | Storage |
+  | React+TS  |<--->| Django + DRF     |<--->| VADER Sentiment  |<--->| SQLite  |
+  | Vite      |     | Celery + Redis   |     | Velocity Detect  |     | (dev)   |
+  | Tailwind  |     | News Scrapers    |     | Hype Scoring     |     |         |
+  | Recharts  |     | Price Tracker    |     | ML Pipeline      |     |         |
+  +-----------+     +------------------+     +------------------+     +---------+
+
+Data Flow:
+  1. Scrapers (RSS, Reddit, GNews) fetch articles -> deduplicate -> store
+  2. VADER sentiment analysis scores each narrative
+  3. Price tracker records stock price at publish time + 1h/4h/24h later
+  4. Price impacts are computed (% change, direction label: up/down/flat)
+  5. ML model trains on labeled data (features -> direction prediction)
+  6. Frontend displays analysis, predictions, and explanations
+
+
+WHAT WE'VE BUILT — PHASE BY PHASE
+================================================================================
+
+PHASE 1: Multi-Source News Scraping                              [COMPLETE]
+--------------------------------------------------------------------------
+Goal: Aggregate news from multiple free sources with deduplication.
+
+What was built:
+  - Abstract BaseScraper pattern (api/scrapers/base.py) with URL dedup
+  - RSS feed scraper (Yahoo Finance, Google Finance News, MarketWatch)
+  - Reddit scraper via PRAW (r/wallstreetbets, r/stocks, r/investing)
+  - GNews API scraper (refactored from inline code)
+  - Management command: scrape_narratives
+  - Celery Beat: auto-scrapes all active stocks every 30 minutes
+  - VADER sentiment auto-runs on all new narratives
+
+Key decisions:
+  - URL uniqueness enforced at DB level (unique constraint with condition)
+  - RSS feeds are the primary source (free, unlimited, reliable)
+  - Reddit requires app registration but provides retail sentiment
+  - GNews has 100 req/day limit, used as supplementary source
+
+Results: 155+ narratives scraped for AAPL in first test runs.
+
+
+PHASE 2: Price Impact Labeling                                   [COMPLETE]
+--------------------------------------------------------------------------
+Goal: Record stock prices at news publish time and at +1h/+4h/+24h to
+create labeled training data for the ML model.
+
+What was built:
+  - PriceImpact model (api/models.py) with price fields and impact calc
+  - Price tracker module (api/price_tracker.py) using Twelve Data API
+  - Rate limiting: 8-second throttle between API calls, 429 retry logic
+  - Backfill management command: backfill_prices
+  - Dataset stats command: dataset_stats
+  - Celery tasks for real-time tracking (record at publish, check offsets)
+  - Admin panel registration for PriceImpact records
+
+Key decisions:
+  - Direction labels: >0.15% = "up", <-0.15% = "down", else "flat"
+  - Twelve Data free tier: 800 req/day, ~8 req/min -> 8s throttle
+  - Historical backfill uses outputsize-based queries (start_date/end_date
+    doesn't work on free tier)
+  - Celery countdown-based scheduling for +1h/+4h/+24h follow-ups
+
+Results: 24 labeled PriceImpact records from initial AAPL backfill.
+Need 50+ for ML training, 200+ for reliable results.
+
+
+PHASE 3: ML Prediction Pipeline                                  [COMPLETE]
+--------------------------------------------------------------------------
+Goal: Train classical ML models to predict price direction from news features.
+
+What was built:
+  - Feature extraction (api/ml/features.py):
+    * Sentiment: compound, positive, negative, neutral scores
+    * Text: title length, content length
+    * Source: one-hot encoded (news/rss vs reddit)
+    * Temporal: hour of day, day of week, weekend flag, market hours flag
+    * Total: 12 features
+
+  - Model training (api/ml/trainer.py):
+    * Supports Random Forest and XGBoost classifiers
+    * 80/20 train/test split with stratification
+    * Cross-validation scoring
+    * Feature importance ranking
+    * Model saved via joblib to backend/ml_models/
+
+  - Prediction serving (api/ml/predictor.py):
+    * In-memory model caching
+    * Returns predicted direction + class confidence scores
+
+  - Management command: train_model --algorithm random_forest|xgboost
+  - API endpoint: GET /api/market/predict/<ticker>/
+    Returns predictions for latest 5 narratives
+
+Key decisions:
+  - Minimum 50 samples required to train (prevents overfitting on tiny data)
+  - Random Forest as default (robust, interpretable, no hypertuning needed)
+  - XGBoost as alternative (better with more data, gradient boosting)
+  - Feature set kept simple — avoids overfitting on small datasets
+
+
+PHASE 4: LLM Reasoning Layer                                    [PLANNED]
+--------------------------------------------------------------------------
+Goal: Add a large language model (Claude or GPT) to provide deeper
+narrative analysis beyond what classical ML can do.
+
+Planned features:
+  - Summarize why a stock is trending based on recent narratives
+  - Classify narrative themes (earnings, regulation, hype, macro, etc.)
+  - Generate human-readable explanations of model predictions
+  - Power the AI Chat feature on the stock detail page
+  - Combine ML predictions with LLM reasoning for hybrid analysis
+
+
+DATA PIPELINE WALKTHROUGH
+================================================================================
+
+Step 1: Scraping
+  Input:  Stock ticker (e.g., AAPL)
+  Action: RSS scraper fetches Yahoo Finance / Google Finance / MarketWatch
+          Reddit scraper searches r/wallstreetbets, r/stocks, r/investing
+          GNews API fetches recent articles
+  Output: Narrative records in database (title, content, source, URL, date)
+  Dedup:  URLs are checked before insert; DB unique constraint as fallback
+
+Step 2: Sentiment Analysis
+  Input:  Narrative records without sentiment scores
+  Action: VADER SentimentIntensityAnalyzer scores each narrative
+  Output: SentimentScore records (compound, positive, negative, neutral)
+  Labels: compound > 0.05 = bullish, < -0.05 = bearish, else neutral
+
+Step 3: Price Tracking
+  Input:  Narrative with published_at timestamp
+  Action: Twelve Data API fetches stock price at publish time
+          Celery schedules follow-up checks at +1h, +4h, +24h
+  Output: PriceImpact records with 4 price points
+
+Step 4: Impact Labeling
+  Input:  PriceImpact with all 4 prices filled
+  Action: compute_impacts() calculates % change at each offset
+  Output: direction_24h label: "up" (>0.15%), "down" (<-0.15%), "flat"
+
+Step 5: Feature Extraction
+  Input:  Labeled PriceImpact + Narrative + SentimentScore
+  Action: extract_features() builds 12-dimensional feature vector
+  Output: Training DataFrame (features + direction_24h target)
+
+Step 6: Model Training
+  Input:  Training DataFrame (minimum 50 rows)
+  Action: RandomForest or XGBoost classifier, 80/20 split, cross-validation
+  Output: Trained model saved to backend/ml_models/*.joblib
+
+Step 7: Prediction
+  Input:  New narrative (not yet seen price impact)
+  Action: Extract features -> load model -> predict
+  Output: Predicted direction (up/down/flat) + confidence per class
+
+
+ML MODEL DETAILS
+================================================================================
+
+Features (12 total):
+  Sentiment (4):  compound_score, positive_score, negative_score, neutral_score
+  Text (2):       title_length, content_length
+  Source (2):     source_news (1 if RSS/news), source_reddit (1 if Reddit)
+  Temporal (4):   hour_of_day, day_of_week, is_weekend, is_market_hours
+
+Target:
+  direction_24h: "up", "down", or "flat"
+  Based on % price change 24 hours after narrative publication
+  Thresholds: >0.15% = up, <-0.15% = down, else flat
+
+Algorithms:
+  Random Forest (default):
+    - 100 trees, max depth 10
+    - Robust to overfitting, good with small datasets
+    - Interpretable feature importances
+
+  XGBoost (alternative):
+    - 100 boosting rounds, max depth 5
+    - Better performance with larger datasets
+    - Gradient boosting for sequential error correction
+
+Training requirements:
+  - Minimum 50 labeled samples (PriceImpact with direction_24h)
+  - Stratified train/test split preserves class distribution
+  - 5-fold cross-validation for generalization estimate
+
+
+MANAGEMENT COMMANDS REFERENCE
+================================================================================
+
+  python manage.py scrape_narratives
+    --ticker AAPL             Scrape one ticker
+    --all-stocks              Scrape all active stocks
+    --sources rss,reddit,gnews  Which sources (comma-separated)
+    --backfill-days 7         How far back to look
+    --analyze                 Run sentiment after scraping
+
+  python manage.py backfill_prices
+    --ticker AAPL             Backfill one ticker
+    --all-stocks              Backfill all stocks
+    --limit 50                Max narratives to process
+    --delay 8                 Seconds between API calls
+    --dry-run                 Show what would be done without doing it
+
+  python manage.py dataset_stats
+    Shows: total narratives, sentiment-scored, price-labeled
+    Breaks down direction distribution and per-stock counts
+
+  python manage.py train_model
+    --algorithm random_forest   Train Random Forest (default)
+    --algorithm xgboost         Train XGBoost
+
+  python manage.py createsuperuser
+    Create admin panel login
+
+
+API ENDPOINTS REFERENCE
+================================================================================
+
+  GET /api/market/quote/<ticker>/          Current price + daily change
+  GET /api/market/chart/<ticker>/?range=1D Price history (1D, 7D, 1M, 3M)
+  GET /api/market/search/?q=apple          Symbol search
+  GET /api/market/news/<ticker>/           Recent news articles
+  GET /api/market/analyze/<ticker>/        Sentiment + velocity + hype analysis
+  GET /api/market/predict/<ticker>/        ML price impact predictions
+  GET /admin/                              Django admin panel
+
+
+TECH STACK
+================================================================================
+
+  Frontend:     React 19, TypeScript, Vite, Tailwind CSS v4, Recharts
+  Backend:      Django 4.2, Django REST Framework, JWT authentication
+  Async:        Celery + Redis (background scraping every 30 min)
+  Scraping:     feedparser (RSS), PRAW (Reddit), requests (GNews API)
+  Sentiment:    NLTK VADER (rule-based, no training needed)
+  ML:           scikit-learn (Random Forest), XGBoost, pandas, joblib
+  Stock Data:   Twelve Data API (800 req/day free tier)
+  News Data:    GNews API (100 req/day), RSS feeds (unlimited), Reddit (free)
+  Database:     SQLite (dev), PostgreSQL-ready (prod)
+
+
+WHAT'S NEXT
+================================================================================
+
+  1. Collect more labeled data — need 200+ samples across multiple tickers
+     for reliable ML predictions. Run scrapers daily, backfill prices.
+
+  2. LLM reasoning layer — integrate Claude or GPT API for:
+     - Narrative summarization and theme classification
+     - Human-readable prediction explanations
+     - AI Chat feature on stock detail page
+
+  3. Advanced features — narrative clustering, cross-stock correlation,
+     institutional vs. retail sentiment separation, real-time alerts.
+
+  4. Production deployment — PostgreSQL, Redis, Celery worker on cloud,
+     environment-specific settings, CI/CD pipeline.
+
+
+================================================================================
+                   Last updated: February 2026
+================================================================================

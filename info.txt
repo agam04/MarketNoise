@@ -1,0 +1,701 @@
+================================================================================
+  MARKETNOISE — PROJECT OVERVIEW, SYSTEM DESIGN & ARCHITECTURE
+  Last updated: April 2026
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+  1. WHAT IS MARKETNOISE?
+────────────────────────────────────────────────────────────────────────────────
+
+MarketNoise is a narrative dynamics platform for retail investors. The core
+mission is NOT to predict stock prices — it is to help users understand the
+STORY being told about a stock: whether it is hype-driven or information-driven,
+whether the narrative is accelerating or cooling, and when the story shifted.
+
+The product answers three questions:
+  • What is the market saying about this stock right now? (sentiment)
+  • Is the attention growing or fading? (velocity)
+  • Is this information-driven or hype-driven? (hype score)
+
+And two deeper questions:
+  • How has the narrative evolved over time? (narrative drift)
+  • What archetype is this stock in right now? (pattern classification)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  2. TECH STACK
+────────────────────────────────────────────────────────────────────────────────
+
+  FRONTEND
+  ├── React 19 + TypeScript
+  ├── Vite (dev server + build)
+  ├── Tailwind CSS v4 (custom dark theme with surface/brand/danger tokens)
+  ├── React Router v6 (client-side routing)
+  ├── Recharts (AreaChart for narrative timeline)
+  ├── Lucide React (icons)
+  └── Vite proxy → Django backend (avoids CORS in dev)
+
+  BACKEND
+  ├── Python 3.13
+  ├── Django 4.2 + Django REST Framework
+  ├── JWT Auth (SimpleJWT)
+  ├── Celery + Redis (background task queue for scrapers)
+  ├── Django Cache Framework (in-memory / Redis)
+  ├── SQLite (dev) / PostgreSQL (prod)
+  └── Gunicorn (prod WSGI server)
+
+  NLP / ML
+  ├── FinBERT (ProsusAI/finbert via HuggingFace Transformers) — primary
+  ├── Apple MPS (Metal GPU) acceleration on Apple Silicon
+  ├── NLTK VADER — fallback when FinBERT unavailable
+  └── scikit-learn (ML model for price impact prediction — experimental)
+
+  DATA SOURCES
+  ├── GNews API — news articles (100 req/day free tier)
+  ├── Twelve Data API — price quotes, OHLCV time series
+  ├── RSS scrapers — free news feeds (no API quota)
+  └── yfinance — historical data, earnings dates (backtesting)
+
+  AI CHAT
+  ├── Gemini API (Google) — user-provided key
+  └── Groq API — user-provided key (fast Llama inference)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  3. HIGH-LEVEL ARCHITECTURE
+────────────────────────────────────────────────────────────────────────────────
+
+  ┌─────────────────────────────────────────────────────────┐
+  │                     USER BROWSER                        │
+  │                  React 19 + TypeScript                  │
+  │   HomePage  StockPage  LoginPage  RegisterPage          │
+  └────────────────────────┬────────────────────────────────┘
+                           │ HTTP (Vite proxy in dev)
+                           │ /api/*
+                           ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │                  DJANGO REST API                         │
+  │  ┌──────────────┐  ┌───────────────┐  ┌─────────────┐  │
+  │  │  market_views│  │    views.py   │  │  users/     │  │
+  │  │  (proxy +    │  │  (DRF CRUD    │  │  (auth,     │  │
+  │  │   analysis)  │  │   viewsets)   │  │   API keys) │  │
+  │  └──────┬───────┘  └───────────────┘  └─────────────┘  │
+  │         │                                               │
+  │  ┌──────▼──────────────────────────────────────────┐   │
+  │  │              ANALYSIS PIPELINE                   │   │
+  │  │  analysis.py  →  drift.py  →  patterns.py       │   │
+  │  │  FinBERT / VADER  scoring                        │   │
+  │  └──────────────────────────────────────────────────┘   │
+  │         │                                               │
+  │  ┌──────▼──────────────────────────────────────────┐   │
+  │  │           DJANGO ORM  /  SQLite (dev)            │   │
+  │  │  Stock  Narrative  SentimentScore  VelocityMetric│   │
+  │  │  HypeScore  PriceImpact                          │   │
+  │  └──────────────────────────────────────────────────┘   │
+  └─────────────────────────────────────────────────────────┘
+                           │
+                           │ Celery tasks (background)
+                           ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │                  SCRAPERS  (every 30 min)                │
+  │  RSS  ·  GNews  ·  Reddit  →  Narrative DB records       │
+  └─────────────────────────────────────────────────────────┘
+
+  EXTERNAL APIs
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+  │  Twelve Data │  │  GNews API   │  │ Gemini/Groq  │
+  │  (price data)│  │  (news)      │  │  (AI chat)   │
+  └──────────────┘  └──────────────┘  └──────────────┘
+
+
+────────────────────────────────────────────────────────────────────────────────
+  4. DIRECTORY STRUCTURE
+────────────────────────────────────────────────────────────────────────────────
+
+  Market-Noise/
+  ├── frontend/
+  │   ├── src/
+  │   │   ├── pages/
+  │   │   │   ├── HomePage.tsx          ← Live narrative feed + search hero
+  │   │   │   ├── StockPage.tsx         ← Full stock analysis page
+  │   │   │   ├── LoginPage.tsx         ← JWT auth login
+  │   │   │   ├── RegisterPage.tsx      ← Account creation
+  │   │   │   └── SettingsPage.tsx      ← API key management (Gemini/Groq)
+  │   │   ├── components/
+  │   │   │   ├── Navbar.tsx            ← Top nav + auth state
+  │   │   │   ├── SearchBar.tsx         ← Autocomplete ticker search
+  │   │   │   ├── PriceChart.tsx        ← OHLCV chart with range selector
+  │   │   │   ├── AnalysisSection.tsx   ← 4-card grid: sentiment/vel/hype/pattern
+  │   │   │   ├── PatternCard.tsx       ← Narrative pattern display card
+  │   │   │   ├── NarrativeTimeline.tsx ← Recharts drift chart + window stats
+  │   │   │   ├── NarrativeFeedCard.tsx ← Homepage feed card (per ticker)
+  │   │   │   ├── ChatPanel.tsx         ← AI chat interface
+  │   │   │   └── NewsSection.tsx       ← Recent news articles
+  │   │   ├── services/
+  │   │   │   ├── analysisService.ts    ← fetchAnalysis / fetchDrift / fetchTrending
+  │   │   │   ├── stockService.ts       ← fetchChartData / fetchQuote
+  │   │   │   ├── searchService.ts      ← Autocomplete API
+  │   │   │   ├── newsService.ts        ← News articles API
+  │   │   │   ├── chatService.ts        ← AI chat API
+  │   │   │   └── authService.ts        ← Login / register / JWT storage
+  │   │   ├── contexts/
+  │   │   │   └── AuthContext.tsx       ← Global auth state
+  │   │   └── types/
+  │   │       └── stock.ts              ← Shared TypeScript types
+  │   ├── vite.config.ts                ← Proxy /api → localhost:8000
+  │   └── tailwind.config.ts            ← Custom theme tokens
+  │
+  └── backend/
+      ├── config/
+      │   ├── settings.py               ← Django settings, JWT config, cache
+      │   ├── celery.py                 ← Celery app + beat schedule
+      │   └── urls.py                   ← Root URL conf
+      ├── api/
+      │   ├── models.py                 ← All DB models (see Section 5)
+      │   ├── analysis.py               ← Sentiment + velocity + hype pipeline
+      │   ├── drift.py                  ← Narrative drift computation
+      │   ├── patterns.py               ← Pattern classifier (6 archetypes)
+      │   ├── market_views.py           ← All HTTP endpoints (see Section 7)
+      │   ├── urls.py                   ← API URL routing
+      │   ├── views.py                  ← DRF CRUD viewsets
+      │   ├── serializers.py            ← DRF serializers
+      │   ├── price_tracker.py          ← Price impact tracking
+      │   ├── llm.py                    ← Gemini/Groq AI chat
+      │   ├── nlp/
+      │   │   └── finbert.py            ← FinBERT singleton + VADER fallback
+      │   ├── ml/
+      │   │   ├── features.py           ← Feature extraction for ML model
+      │   │   ├── trainer.py            ← Model training
+      │   │   └── predictor.py          ← Inference
+      │   ├── scrapers/
+      │   │   ├── base.py               ← Base scraper class
+      │   │   ├── rss_scraper.py        ← RSS feed scraper
+      │   │   ├── gnews_scraper.py      ← GNews API scraper
+      │   │   └── reddit_scraper.py     ← Reddit scraper
+      │   └── management/commands/
+      │       ├── scrape_narratives.py  ← Manual scrape trigger
+      │       ├── backtest.py           ← Sentiment vs returns backtest
+      │       ├── backtest_events.py    ← Earnings event backtester
+      │       ├── backfill_prices.py    ← Historical price backfill
+      │       ├── dataset_stats.py      ← DB statistics report
+      │       └── train_model.py        ← Train ML price-impact model
+      ├── users/
+      │   ├── models.py                 ← User + UserAPIKey
+      │   ├── views.py                  ← Register / login / key management
+      │   ├── encryption.py             ← Fernet-based API key encryption
+      │   └── urls.py                   ← Auth + key endpoints
+      ├── tasks/                        ← Celery task definitions
+      ├── ml_models/                    ← Serialized sklearn models (.pkl)
+      └── requirements.txt
+
+
+────────────────────────────────────────────────────────────────────────────────
+  5. DATABASE MODELS
+────────────────────────────────────────────────────────────────────────────────
+
+  Stock
+  ├── ticker          CharField (unique, indexed)
+  ├── name            CharField
+  ├── sector          CharField
+  ├── exchange        CharField
+  └── is_active       BooleanField
+
+  Narrative  (a news article or social post about a stock)
+  ├── stock           FK → Stock
+  ├── title           CharField(500)
+  ├── content         TextField
+  ├── source          CharField (news/rss/reddit/twitter/other)
+  ├── source_name     CharField
+  ├── url             URLField (unique constraint on non-empty)
+  └── published_at    DateTimeField
+
+  SentimentScore  (FinBERT/VADER result per Narrative)
+  ├── narrative       OneToOneField → Narrative
+  ├── stock           FK → Stock
+  ├── label           CharField (positive/negative/neutral/mixed)
+  ├── positive_score  FloatField
+  ├── negative_score  FloatField
+  ├── neutral_score   FloatField
+  └── compound_score  FloatField  (-1 to +1)
+
+  VelocityMetric  (mention rate change over a time window)
+  ├── stock           FK → Stock
+  ├── mention_count   IntegerField (total articles for this stock)
+  ├── velocity_score  FloatField  (0–100, rate of change)
+  ├── acceleration    FloatField  (% change vs prior period)
+  ├── trend           CharField (accelerating/decelerating/stable)
+  ├── window_start    DateTimeField
+  └── window_end      DateTimeField
+
+  HypeScore  (composite risk score per analysis run)
+  ├── stock               FK → Stock
+  ├── score               FloatField  (0–100)
+  ├── level               CharField (low/moderate/high/extreme)
+  ├── sentiment_imbalance FloatField  (raw imbalance ratio 0–1)
+  ├── velocity_factor     FloatField  (raw velocity score 0–100)
+  ├── social_news_ratio   FloatField  (reserved, currently 0)
+  └── explanation         TextField
+
+  PriceImpact  (tracks price movement after a narrative, for ML training)
+  ├── narrative       OneToOneField → Narrative
+  ├── stock           FK → Stock
+  ├── price_at_publish / price_1h / price_4h / price_24h  FloatField
+  ├── impact_1h / impact_4h / impact_24h  FloatField (% change)
+  └── direction_24h   CharField (up/down/flat)
+
+  UserAPIKey  (encrypted storage of user's LLM keys)
+  ├── user            FK → auth.User
+  ├── service         CharField (gemini/groq)
+  └── encrypted_key   TextField (Fernet-encrypted)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  6. DATA FLOW — WHAT HAPPENS WHEN YOU SEARCH A TICKER
+────────────────────────────────────────────────────────────────────────────────
+
+  User searches "NVDA"
+        │
+        ▼
+  GET /api/market/analyze/NVDA/?name=NVIDIA
+        │
+        ├─▶ Stock.get_or_create(ticker='NVDA')
+        │
+        ├─▶ Check Narrative DB for articles in last 48h
+        │     └─ If empty → fetch from GNews API (fallback)
+        │          └─ Save new Narrative records to DB
+        │
+        ├─▶ ensure_sentiment_scores()
+        │     └─ Find Narratives with no SentimentScore
+        │          ├─ Batch all titles through FinBERT (or VADER fallback)
+        │          └─ Save SentimentScore records to DB
+        │
+        ├─▶ compute_velocity()
+        │     ├─ Count narratives: last 24h vs 24-48h ago
+        │     ├─ Compute % change → velocity score 0-100
+        │     └─ Save VelocityMetric to DB
+        │
+        ├─▶ compute_hype_score()
+        │     ├─ Factor 1: sentiment imbalance (0-40 pts)
+        │     ├─ Factor 2: velocity factor (0-35 pts)
+        │     ├─ Factor 3: source concentration (0-25 pts)
+        │     └─ Save HypeScore to DB
+        │
+        ├─▶ classify_pattern(sentiment, velocity, hype)
+        │     └─ Rule-based classifier → one of 6 archetypes
+        │
+        └─▶ Return JSON { sentiment, velocity, hype, pattern }
+              └─ Cached for 15 min
+
+  Separately:
+  GET /api/market/drift/NVDA/
+        │
+        ├─▶ Query all SentimentScore records for NVDA (last 91 days)
+        ├─▶ Aggregate by day → daily timeline [{date, compound, count, label}]
+        ├─▶ Compute window stats: 7d / 30d / 90d
+        │     └─ Compare first half vs second half → drift direction
+        ├─▶ Detect last narrative shift (3-day rolling average crossing)
+        └─▶ Return { ticker, timeline, windows, shift, data_available }
+              └─ Cached for 30 min
+
+
+────────────────────────────────────────────────────────────────────────────────
+  7. API ENDPOINTS
+────────────────────────────────────────────────────────────────────────────────
+
+  All under /api/
+
+  MARKET (no auth required)
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  GET  market/search/?q=APPL          Ticker autocomplete            │
+  │  GET  market/quote/<ticker>/         Live price quote (10m cache)   │
+  │  GET  market/chart/<ticker>/         OHLCV time series (10m cache)  │
+  │  GET  market/news/<ticker>/          Recent news (15m cache)        │
+  │  GET  market/analyze/<ticker>/       Full analysis pipeline (15m)   │
+  │  GET  market/drift/<ticker>/         Narrative drift (30m cache)    │
+  │  GET  market/trending/               Top stocks by activity (10m)   │
+  │  GET  market/predict/<ticker>/       ML price direction (no cache)  │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  MARKET (auth required)
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  POST market/chat/<ticker>/          AI chat (Gemini or Groq)       │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  AUTH
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  POST users/register/                Create account                 │
+  │  POST users/login/                   Get JWT access + refresh       │
+  │  POST users/token/refresh/           Refresh JWT                    │
+  │  GET  users/me/                      Current user info              │
+  │  GET  users/api-keys/                List saved API keys            │
+  │  POST users/api-keys/                Save encrypted API key         │
+  │  DEL  users/api-keys/<id>/           Delete API key                 │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  DRF CRUD (admin/internal)
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  /api/stocks/                        Stock CRUD                     │
+  │  /api/narratives/                    Narrative CRUD                 │
+  │  /api/sentiment/                     SentimentScore read            │
+  │  /api/velocity/                      VelocityMetric read            │
+  │  /api/hype/                          HypeScore read                 │
+  └─────────────────────────────────────────────────────────────────────┘
+
+
+────────────────────────────────────────────────────────────────────────────────
+  8. NLP PIPELINE — FINBERT + VADER
+────────────────────────────────────────────────────────────────────────────────
+
+  Model: ProsusAI/finbert
+  ├── Trained on financial text (Reuters, Financial PhraseBank)
+  ├── Outputs: positive_prob, negative_prob, neutral_prob
+  └── compound = positive_prob - negative_prob  (range -1 to +1)
+
+  Singleton pattern (api/nlp/finbert.py):
+  ├── Lazy-loaded on first call (avoids startup memory hit)
+  ├── Device detection: MPS (Apple Silicon) > CUDA > CPU
+  ├── Batch inference: analyze_batch(texts, batch_size=32)
+  └── is_available() → False if model not downloaded yet
+
+  Fallback (NLTK VADER):
+  ├── Always available, no download required beyond lexicon
+  ├── Not trained on financial text → weaker signal
+  └── Used when FinBERT is not installed or fails
+
+  Classification thresholds (compound score):
+  ├── compound >= +0.05  → positive (bullish)
+  ├── compound <= -0.05  → negative (bearish)
+  └── else               → neutral
+
+
+────────────────────────────────────────────────────────────────────────────────
+  9. PATTERN CLASSIFICATION (6 ARCHETYPES)
+────────────────────────────────────────────────────────────────────────────────
+
+  Classifier in api/patterns.py. Ordered priority — first match wins.
+
+  1. SHORT SQUEEZE DYNAMICS  (risk: extreme, color: red)
+     Conditions: 3+ of:
+     • compound >= +0.30 (extreme positive)
+     • velocity accelerating AND change_percent >= 40%
+     • sentiment_imbalance >= 10 pts (one-sided narrative)
+     • hype_score >= 60
+
+  2. MACRO FEAR PATTERN  (risk: high, color: light red)
+     Conditions: 2+ of:
+     • compound <= -0.15
+     • negative article ratio >= 35%
+     • sustained coverage with hype_score >= 30
+
+  3. THEME / SECTOR WAVE  (risk: high, color: amber)
+     Conditions: 3+ of:
+     • compound >= +0.15
+     • velocity accelerating
+     • wide source distribution (source_conc <= 10) + hype >= 30
+     • hype_score >= 40
+
+  4. NARRATIVE COOL-OFF  (risk: moderate, color: blue)
+     Conditions: 2+ of:
+     • velocity decelerating
+     • previously elevated hype (>= 25)
+     • coverage drop >= 20%
+
+  5. PRE-CATALYST BUILD  (risk: moderate, color: purple)
+     Conditions: 1+ of:
+     • accelerating volume with neutral tone (|compound| < 0.2)
+     • building anticipation (0.05 <= |compound| < 0.25 AND vel >= 20)
+
+  6. BALANCED COVERAGE  (risk: low, color: green)
+     Fallback — no unusual signals detected
+
+
+────────────────────────────────────────────────────────────────────────────────
+  10. HYPE SCORE FORMULA (0–100)
+────────────────────────────────────────────────────────────────────────────────
+
+  Three factors combined:
+
+  Factor 1: Sentiment Imbalance (0–40 pts)
+  ├── Count positive vs negative articles
+  ├── dominant_ratio = max(pos, neg) / total
+  └── score = max(0, (dominant_ratio - 0.5) * 2) * 40
+       → 0 pts if 50/50 split, 40 pts if 100% one direction
+
+  Factor 2: Velocity Factor (0–35 pts)
+  └── score = min(velocity_score / 100, 1.0) * 35
+
+  Factor 3: Source Concentration (0–25 pts)
+  ├── diversity = unique_sources / total_articles
+  └── score = max(0, 1 - diversity) * 25
+       → 0 pts if all different sources, 25 pts if all same source
+
+  Level thresholds:
+  ├── score >= 70  → extreme
+  ├── score >= 45  → high
+  ├── score >= 20  → moderate
+  └── score <  20  → low
+
+
+────────────────────────────────────────────────────────────────────────────────
+  11. NARRATIVE DRIFT (api/drift.py)
+────────────────────────────────────────────────────────────────────────────────
+
+  Purpose: Show how sentiment has evolved over time (7d / 30d / 90d).
+
+  Computation:
+  1. Pull all SentimentScore records for last 91 days
+  2. Aggregate by calendar day → {date, avg_compound, count, label}
+  3. Window stats (7d/30d/90d):
+     ├── avg_compound across the window
+     ├── direction: positive/negative/neutral
+     └── drift_direction: compare first half vs second half
+          • delta > +0.05 → improving
+          • delta < -0.05 → worsening
+          • else          → stable
+
+  Shift detection:
+  1. Compute 3-day rolling average across timeline
+  2. Walk backward — find last day where rolling avg crossed sentiment boundary
+  3. Return: {detected, date, from_label, to_label, description}
+
+  Frontend display:
+  ├── Recharts AreaChart — color adapts to avg sentiment (green/red/gray)
+  ├── Window selector: 7D / 30D / 90D
+  ├── WindowStat pills showing avg_compound + drift direction icon
+  └── Shift annotation box (purple accent when detected)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  12. AUTHENTICATION & API KEY MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+
+  Auth: JWT (SimpleJWT)
+  ├── POST /users/login/   → access_token (short-lived) + refresh_token
+  ├── Access token stored in-memory (AuthContext)
+  └── Refresh token stored in localStorage
+
+  API Key encryption (users/encryption.py):
+  ├── Fernet symmetric encryption (cryptography library)
+  ├── Key derived from Django SECRET_KEY
+  ├── User can save Gemini + Groq keys on Settings page
+  └── Keys decrypted only at request time in market_chat view
+
+  AI Chat flow:
+  1. User posts question to /api/market/chat/<ticker>/
+  2. Backend fetches user's encrypted keys from DB
+  3. Decrypts on-the-fly, picks Gemini first (Groq as fallback)
+  4. Builds context: ticker, company name, recent narratives
+  5. Returns AI answer
+
+
+────────────────────────────────────────────────────────────────────────────────
+  13. BACKGROUND SCRAPING
+────────────────────────────────────────────────────────────────────────────────
+
+  Celery + Redis runs scrapers every 30 minutes.
+
+  Scraper types:
+  ├── rss_scraper.py   — Parses RSS feeds (no API quota)
+  ├── gnews_scraper.py — GNews API (100 req/day on free tier)
+  └── reddit_scraper.py — Reddit posts (PRAW)
+
+  Each scraper:
+  1. Fetches articles for tracked tickers
+  2. Deduplicates by URL
+  3. Creates Narrative records
+  4. Triggers ensure_sentiment_scores() to batch-score new narratives
+
+  Run manually:
+  python3 manage.py scrape_narratives --ticker AAPL
+
+
+────────────────────────────────────────────────────────────────────────────────
+  14. FRONTEND PAGES & COMPONENTS
+────────────────────────────────────────────────────────────────────────────────
+
+  HomePage
+  ├── Compact hero: animated logo, wordmark, SearchBar, feature pills
+  ├── Market Pulse section: live feed of top stocks by narrative activity
+  ├── NarrativeFeedCard grid (2/3/4 columns by breakpoint)
+  ├── Skeleton loading state (8 animated placeholder cards)
+  ├── Empty state when no DB data exists yet (with quick-start ticker buttons)
+  └── Refresh button with last-updated timestamp
+
+  StockPage
+  ├── Back button + secondary SearchBar
+  ├── Stock header: ticker, company name, live price, change badge
+  ├── PriceChart: OHLCV line chart, range selector (1D/7D/1M/3M)
+  ├── AnalysisSection: 4-card grid
+  │   ├── SentimentCard (Bullish/Bearish/Neutral + compound bar)
+  │   ├── VelocityCard (Accelerating/Stable/Decelerating + bar)
+  │   ├── HypeCard (score/100, level, 3-factor breakdown)
+  │   └── PatternCard (archetype name, description, signals, risk badge)
+  ├── NarrativeTimeline: Recharts area chart + window stats + shift detection
+  ├── ChatPanel: AI chat powered by user's Gemini/Groq key
+  └── NewsSection: recent articles with timestamps
+
+  NarrativeFeedCard (homepage feed)
+  ├── Pattern color top border accent
+  ├── Rank number + ticker + company name
+  ├── Hype level badge (colored pill)
+  ├── Pattern emoji + pattern name (colored)
+  ├── Sentiment label (Bullish/Bearish/Neutral) + compound score
+  ├── Velocity trend with icon (Accelerating / Cooling / Stable)
+  ├── Hype score progress bar
+  └── Entire card is a link → /stock/:ticker
+
+
+────────────────────────────────────────────────────────────────────────────────
+  15. ML MODEL (EXPERIMENTAL)
+────────────────────────────────────────────────────────────────────────────────
+
+  Goal: predict whether a narrative will move price UP / DOWN / FLAT.
+
+  Features extracted per narrative (api/ml/features.py):
+  ├── Sentiment scores (compound, positive, negative, neutral)
+  ├── Source type encoding
+  ├── Hour of day published
+  ├── Days since last major narrative
+  └── Current hype level encoding
+
+  Training (manage.py train_model):
+  ├── Pulls PriceImpact records with direction_24h label
+  ├── RandomForestClassifier (scikit-learn)
+  └── Saves to ml_models/price_impact_model.pkl
+
+  Backtesting (manage.py backtest):
+  ├── --model vader|finbert|both
+  ├── Pearson correlation: sentiment vs next-day return
+  ├── Directional accuracy
+  └── Per-sentiment-label breakdown
+
+  NOTE: This is experimental and does not drive the core product.
+  The product's value is in narrative dynamics, not price prediction.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  16. HOW TO RUN LOCALLY
+────────────────────────────────────────────────────────────────────────────────
+
+  BACKEND
+  ──────────────────────────────────
+  cd backend
+  source venv/bin/activate
+  python3 manage.py migrate          # first time only
+  python3 manage.py runserver        # runs on localhost:8000
+
+  Required env vars (backend/.env):
+  ├── SECRET_KEY=<django secret>
+  ├── GNEWS_API_KEY=<your gnews key>
+  ├── TWELVEDATA_API_KEY=<your key>
+  └── REDIS_URL=redis://localhost:6379  (for Celery)
+
+  FRONTEND
+  ──────────────────────────────────
+  cd frontend
+  npm install                        # first time only
+  npm run dev                        # runs on localhost:5173
+  npm run build                      # production build
+
+  Required env (frontend/.env):
+  └── VITE_GNEWS_API_KEY=<your gnews key>  (legacy, now used by backend)
+
+  CELERY (background scrapers)
+  ──────────────────────────────────
+  redis-server                       # start Redis
+  cd backend && source venv/bin/activate
+  celery -A config worker -l info    # worker
+  celery -A config beat   -l info    # scheduler (triggers every 30 min)
+
+  USEFUL MANAGEMENT COMMANDS
+  ──────────────────────────────────
+  python3 manage.py scrape_narratives --ticker AAPL
+  python3 manage.py dataset_stats
+  python3 manage.py backtest --model both
+  python3 manage.py backtest_events --mode future
+  python3 manage.py train_model
+  python3 manage.py backfill_prices
+
+
+────────────────────────────────────────────────────────────────────────────────
+  17. CACHING STRATEGY
+────────────────────────────────────────────────────────────────────────────────
+
+  All expensive endpoints are cached using Django's cache framework.
+  In dev: in-memory (LocMem). In prod: Redis.
+
+  Cache key format    │ TTL    │ Endpoint
+  ────────────────────┼────────┼─────────────────────────
+  quote:<TICKER>      │ 10 min │ market/quote/
+  chart:<TICK>:<RNG>  │ 10 min │ market/chart/
+  search:<query>      │ 30 min │ market/search/
+  news:<TICKER>       │ 15 min │ market/news/
+  analyze:<TICKER>    │ 15 min │ market/analyze/
+  drift:<TICKER>      │ 30 min │ market/drift/
+  trending:top        │ 10 min │ market/trending/
+
+
+────────────────────────────────────────────────────────────────────────────────
+  18. WHAT HAS BEEN BUILT (FEATURE HISTORY)
+────────────────────────────────────────────────────────────────────────────────
+
+  Phase 1 — Foundation
+  ├── Django backend with Stock / Narrative / SentimentScore models
+  ├── GNews API integration + news scraper
+  ├── VADER-based sentiment analysis pipeline
+  ├── VelocityMetric computation (mention rate change)
+  ├── HypeScore composite (3-factor: imbalance + velocity + source diversity)
+  ├── React frontend: SearchBar, StockPage, PriceChart, AnalysisSection
+  └── Twelve Data price integration
+
+  Phase 1b — NLP Upgrade
+  ├── FinBERT integration (ProsusAI/finbert via HuggingFace)
+  ├── Apple MPS acceleration support
+  ├── Batch inference for efficiency
+  ├── VADER kept as fallback
+  └── Backtesting framework (VADER vs FinBERT comparison)
+
+  Phase 2 — Narrative Intelligence
+  ├── Narrative Drift: daily timeline + 7d/30d/90d windows + shift detection
+  ├── Pattern Classification: 6 archetypes (short_squeeze, macro_fear, etc.)
+  ├── PatternCard frontend component
+  ├── NarrativeTimeline Recharts component with window selector
+  └── StockPage integration of both
+
+  Phase 3 — Auth + AI
+  ├── JWT authentication (register / login / refresh)
+  ├── Encrypted API key storage (Fernet)
+  ├── Settings page for Gemini / Groq keys
+  ├── AI Chat panel powered by user's own keys
+  └── Navbar with auth state
+
+  Phase 4 — Homepage Redesign
+  ├── GET /api/market/trending/ endpoint (DB-only, no API calls)
+  ├── TrendingItem type + fetchTrending() service
+  ├── NarrativeFeedCard component (pattern + hype + velocity + sentiment)
+  └── New HomePage: compact hero + live Market Pulse feed
+
+
+────────────────────────────────────────────────────────────────────────────────
+  19. KNOWN LIMITATIONS & FUTURE WORK
+────────────────────────────────────────────────────────────────────────────────
+
+  Limitations
+  ├── GNews free tier: 100 req/day — limits how many tickers can be tracked
+  ├── SQLite in dev: no DISTINCT ON, some query patterns limited
+  ├── FinBERT first load is slow (~5s) — model stays in memory after
+  ├── ML price-prediction model is experimental, not production-ready
+  └── No real-time WebSocket updates — polling only
+
+  Potential next features
+  ├── Watchlist: save tickers, get notified when pattern changes
+  ├── Pattern change alerts (email/push when archetype shifts)
+  ├── Sector-level narrative view (aggregate across sector)
+  ├── Historical pattern replay ("what was the story 3 months ago?")
+  ├── Backtest validation: does hype score predict reversals?
+  ├── Premium tier: real-time Celery scraping for your watchlist
+  └── Mobile app (React Native reusing the same backend)
+
+================================================================================
+  END OF DOCUMENT
+================================================================================

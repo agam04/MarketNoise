@@ -1,0 +1,45 @@
+# Django & REST Framework
+django>=4.2,<5.0
+djangorestframework>=3.14
+django-cors-headers>=4.0
+
+# Authentication
+djangorestframework-simplejwt>=5.3
+
+# Database
+psycopg2-binary>=2.9
+
+# Async Tasks
+celery>=5.3
+redis>=5.0
+
+# Environment Variables
+python-dotenv>=1.0
+
+# Elasticsearch
+elasticsearch>=8.0
+
+# NLP / Sentiment Analysis
+nltk>=3.8
+transformers>=4.40
+torch>=2.0
+
+# Scrapers
+feedparser>=6.0
+praw>=7.7
+
+# Machine Learning
+scikit-learn>=1.3
+xgboost>=2.0
+joblib>=1.3
+pandas>=2.0
+
+# Encryption
+cryptography>=42.0
+
+# LLM providers
+google-genai>=1.0
+groq>=1.0
+
+# Utilities
+requests>=2.31

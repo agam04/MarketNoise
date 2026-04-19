@@ -1,0 +1,345 @@
+================================================================================
+                        MarketNoise — How to Use
+================================================================================
+
+1. SETUP (One-Time)
+================================================================================
+
+  A) Backend
+  ----------
+  cd backend
+  python -m venv venv
+  source venv/bin/activate        # On Windows: venv\Scripts\activate
+  pip install -r requirements.txt
+
+  Copy .env.example to .env and fill in your API keys:
+    cp .env.example .env
+
+  You need at minimum:
+    TWELVEDATA_API_KEY   — Free at https://twelvedata.com (800 requests/day)
+    GNEWS_API_KEY        — Free at https://gnews.io (100 requests/day)
+
+  Optional (for Reddit scraping):
+    REDDIT_CLIENT_ID     — Free at https://www.reddit.com/prefs/apps
+    REDDIT_CLIENT_SECRET   (create a "script" type app)
+
+  Run database migrations:
+    python manage.py migrate
+
+  Create an admin user (optional, for Django admin panel):
+    python manage.py createsuperuser
+
+
+  B) Frontend
+  -----------
+  cd frontend
+  npm install
+
+
+================================================================================
+
+2. RUNNING THE APP
+================================================================================
+
+  You need two terminals running:
+
+  Terminal 1 — Backend:
+    cd backend
+    source venv/bin/activate
+    python manage.py runserver
+    # Runs at http://localhost:8000
+
+  Terminal 2 — Frontend:
+    cd frontend
+    npm run dev
+    # Runs at http://localhost:5173
+
+  Open http://localhost:5173 in your browser.
+
+
+================================================================================
+
+3. USING THE DASHBOARD
+================================================================================
+
+  HOME PAGE
+  ---------
+  - Type a stock ticker or company name in the search bar (e.g. "AAPL", "Tesla")
+  - Autocomplete will show matching results
+  - Click a result or press Enter to go to the stock detail page
+  - Quick-access pills (AAPL, TSLA, NVDA, GME, META) are below the search bar
+
+  STOCK PAGE
+  ----------
+  The stock detail page has several sections:
+
+  a) Price Header
+     - Shows current price, change amount, and change percentage
+     - Change updates dynamically based on the selected chart range
+     - Label shows which period the change is for (Today, Past Week, etc.)
+
+  b) Price Chart
+     - Interactive area chart with 4 time ranges: 1D, 7D, 1M, 3M
+     - Click a range button to switch — header price change updates to match
+     - Hover over the chart to see exact prices at any point
+
+  c) Analysis Cards (3 cards)
+     - Sentiment Analysis: Bullish/Bearish/Neutral based on VADER NLP
+       Shows compound score, article breakdown, and bullish-bearish spectrum bar
+     - Narrative Velocity: Accelerating/Decelerating/Stable
+       Measures how fast news coverage is changing (24h vs prior 24h)
+     - Hype Risk Score: 0-100 score with Low/Moderate/High/Extreme level
+       Combines sentiment imbalance + velocity + source diversity
+     - Each card includes a plain-English explanation of WHY it scored that way
+
+  d) AI Chat (Beta)
+     - Ask questions about the stock (e.g. "Why is AAPL trending?")
+     - Currently returns placeholder responses — LLM integration coming soon
+
+  e) News Feed
+     - Latest news articles from multiple sources
+     - Shows source name, timestamp, and headline
+     - Click any article to read the full story
+
+  ADMIN PANEL
+  -----------
+  - Go to http://localhost:8000/admin/
+  - Log in with your superuser credentials
+  - Browse all Stocks, Narratives, SentimentScores, VelocityMetrics, HypeScores
+
+
+================================================================================
+
+4. SCRAPING NEWS (Building Your Dataset)
+================================================================================
+
+  The scraper collects news from 3 source types:
+    - RSS feeds (Yahoo Finance, Google Finance News, MarketWatch) — free, unlimited
+    - Reddit (r/wallstreetbets, r/stocks, r/investing) — free, needs app credentials
+    - GNews API — 100 requests/day free
+
+  MANUAL SCRAPING
+  ---------------
+  cd backend
+  source venv/bin/activate
+
+  # Scrape RSS feeds for Apple, last 7 days, and run sentiment analysis:
+  python manage.py scrape_narratives --ticker AAPL --sources rss --backfill-days 7 --analyze
+
+  # Scrape all sources for Tesla, last 30 days:
+  python manage.py scrape_narratives --ticker TSLA --sources rss,reddit,gnews --backfill-days 30 --analyze
+
+  # Scrape all active stocks in the database:
+  python manage.py scrape_narratives --all-stocks --sources rss --backfill-days 7 --analyze
+
+  Options:
+    --ticker AAPL         Single ticker to scrape
+    --all-stocks          Scrape every active stock in the database
+    --sources rss,reddit,gnews   Which sources to use (comma-separated)
+    --backfill-days 30    How far back to look (default: 1 day)
+    --analyze             Run VADER sentiment on new articles after scraping
+
+  AUTOMATIC SCRAPING (with Celery)
+  --------------------------------
+  For continuous background scraping every 30 minutes:
+
+  Install and start Redis:
+    brew install redis       # macOS
+    redis-server             # Terminal 1
+
+  Start Celery worker:
+    cd backend
+    source venv/bin/activate
+    celery -A config worker -l info    # Terminal 2
+
+  Start Celery beat scheduler:
+    celery -A config beat -l info      # Terminal 3
+
+  This will automatically scrape all active stocks every 30 minutes
+  and run sentiment analysis on new articles.
+
+
+================================================================================
+
+5. PRICE IMPACT TRACKING (Building ML Training Data)
+================================================================================
+
+  After scraping news, you need to label each narrative with its actual
+  price impact. This records the stock price at publish time and at
+  +1h/+4h/+24h, then computes % change and direction (up/down/flat).
+
+  BACKFILL HISTORICAL PRICES
+  --------------------------
+  cd backend
+  source venv/bin/activate
+
+  # Backfill price impacts for one ticker (processes up to 50 narratives):
+  python manage.py backfill_prices --ticker AAPL --limit 50
+
+  # Backfill all active stocks:
+  python manage.py backfill_prices --all-stocks --limit 100
+
+  # Dry run (see what would happen without making API calls):
+  python manage.py backfill_prices --ticker AAPL --limit 50 --dry-run
+
+  Options:
+    --ticker AAPL        Single ticker to backfill
+    --all-stocks         Backfill every active stock
+    --limit 50           Max narratives to process (default: 50)
+    --delay 8            Seconds between API calls (default: 8, for rate limit)
+    --dry-run            Preview only, no API calls
+
+  Note: Each narrative requires ~4 API calls (publish + 1h + 4h + 24h).
+  Twelve Data free tier allows 800 calls/day, so plan accordingly.
+
+  CHECK DATASET READINESS
+  -----------------------
+  python manage.py dataset_stats
+
+  Shows: total narratives, how many have sentiment scores, how many have
+  price labels, direction distribution (up/down/flat), and per-stock counts.
+  You need 50+ labeled samples to train a model.
+
+
+================================================================================
+
+6. ML MODEL TRAINING & PREDICTION
+================================================================================
+
+  Once you have 50+ labeled PriceImpact records (check with dataset_stats),
+  you can train a price direction prediction model.
+
+  TRAINING
+  --------
+  cd backend
+  source venv/bin/activate
+
+  # Train Random Forest (default, recommended for small datasets):
+  python manage.py train_model
+
+  # Train XGBoost (better with larger datasets):
+  python manage.py train_model --algorithm xgboost
+
+  Output includes: test accuracy, cross-validation scores, top feature
+  importances, and classification report. Model is saved to
+  backend/ml_models/ as a .joblib file.
+
+  PREDICTION API
+  --------------
+  Once a model is trained, the predict endpoint becomes available:
+
+  GET /api/market/predict/AAPL/
+
+  Returns predictions for the latest 5 narratives, each with:
+    - title: the narrative headline
+    - predicted_direction: "up", "down", or "flat"
+    - confidence: probability for each class
+    - published_at: when the narrative was published
+
+  If no model is trained yet, it returns a message explaining how to train one.
+
+
+================================================================================
+
+7. API ENDPOINTS (for developers)
+================================================================================
+
+  All endpoints are public (no auth required for read access).
+  Base URL: http://localhost:8000
+
+  GET /api/market/quote/AAPL/
+    Returns: current price, daily change, company name
+
+  GET /api/market/chart/AAPL/?range=1D
+    Returns: array of {date, price} points
+    Range options: 1D, 7D, 1M, 3M
+
+  GET /api/market/search/?q=apple
+    Returns: matching stock tickers (US stocks and ETFs)
+
+  GET /api/market/news/AAPL/
+    Returns: recent news articles with headline, source, timestamp
+
+  GET /api/market/analyze/AAPL/?name=Apple+Inc
+    Returns: full analysis object with:
+      - sentiment: label, compound score, article breakdown, explanation
+      - velocity: score, trend, mention count, change percent, explanation
+      - hype: score (0-100), level, factor breakdown, explanation
+
+  GET /api/market/predict/AAPL/
+    Returns: ML predictions for latest narratives
+      - predicted_direction, confidence scores per class
+      - Requires trained model (see section 6)
+
+  GET /admin/
+    Django admin panel (requires superuser login)
+
+
+================================================================================
+
+8. API RATE LIMITS
+================================================================================
+
+  Twelve Data (stock prices):  800 requests/day on free tier
+  GNews (news articles):       100 requests/day on free tier
+  Reddit (PRAW):               Free, generous limits with registered app
+  RSS feeds:                   Unlimited (no API key needed)
+
+  The backend caches responses to minimize API usage:
+    - Quotes: cached 10 minutes
+    - Charts: cached 10 minutes
+    - Search: cached 30 minutes
+    - News: cached 15 minutes
+    - Analysis: cached 15 minutes
+
+
+================================================================================
+
+9. TROUBLESHOOTING
+================================================================================
+
+  "No price data available"
+    → Make sure the backend is running (python manage.py runserver)
+    → Check that TWELVEDATA_API_KEY is set in backend/.env
+    → You may have hit the 800 req/day limit — wait until tomorrow
+
+  "No news found"
+    → GNews has a 100 req/day limit — may be exhausted
+    → Run the RSS scraper instead: python manage.py scrape_narratives --ticker AAPL --sources rss --analyze
+    → RSS feeds are unlimited and don't need an API key
+
+  Analysis cards show dashes (—)
+    → The stock needs scraped narratives first
+    → Run: python manage.py scrape_narratives --ticker AAPL --sources rss --backfill-days 7 --analyze
+    → Then refresh the stock page
+
+  Reddit scraper returns 0 results
+    → Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in backend/.env
+    → Register a free app at https://www.reddit.com/prefs/apps (choose "script" type)
+
+  Frontend can't connect to backend
+    → Backend must be running on port 8000
+    → Frontend Vite proxy forwards /api/* to localhost:8000 automatically
+    → Check both terminals for errors
+
+  "Not enough training data" when running train_model
+    → You need 50+ labeled PriceImpact records
+    → Run: python manage.py dataset_stats   (to check current count)
+    → Run: python manage.py backfill_prices --ticker AAPL --limit 100
+    → Scrape more tickers to increase dataset diversity
+
+  "No trained model found" from predict endpoint
+    → Train a model first: python manage.py train_model
+    → Model files are saved in backend/ml_models/
+
+  Backfill is slow or hitting rate limits
+    → Twelve Data free tier: 800 req/day, ~8 req/min
+    → Default 8-second delay between calls is intentional
+    → Each narrative needs ~4 API calls (publish + 1h + 4h + 24h)
+    → Plan for ~200 narratives/day maximum
+
+
+================================================================================
+                   Questions? Check README.md or DOCUMENTATION.txt
+================================================================================
+================================================================================
