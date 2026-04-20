@@ -51,7 +51,17 @@ jobs:
           docker push $ECR_REGISTRY/marketnoise-nginx:$IMAGE_TAG
           docker push $ECR_REGISTRY/marketnoise-nginx:latest
 
-      # ── 6. SSH into EC2 and deploy ───────────────────────────────────────────
+      # ── 6. Copy docker-compose.yml to EC2 ───────────────────────────────────
+      - name: Copy compose file to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          source:   docker-compose.yml
+          target:   ~/marketnoise/
+
+      # ── 7. SSH into EC2 and deploy ───────────────────────────────────────────
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
