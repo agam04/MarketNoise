@@ -1,0 +1,55 @@
+# Local development override — builds images from source instead of pulling ECR.
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+version: '3.9'
+
+services:
+
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: marketnoise-backend:dev
+    env_file: backend/.env     # use the local backend/.env in dev
+    volumes:
+      - staticfiles:/app/staticfiles
+      - ./backend:/app          # live-reload: mount source for quick iteration
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: marketnoise-backend:dev
+    command: celery -A config worker --loglevel=info --concurrency=2
+    env_file: backend/.env
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: marketnoise-backend:dev
+    command: celery -A config beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    env_file: backend/.env
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    image: marketnoise-nginx:dev
+    ports:
+      - "80:80"
+    volumes:
+      - staticfiles:/app/staticfiles:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  staticfiles:

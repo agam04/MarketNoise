@@ -1,0 +1,63 @@
+version: '3.9'
+
+# Production docker-compose — used on the EC2 host and in CI/CD.
+#
+# External services (not managed here):
+#   • PostgreSQL  → AWS RDS
+#   • Redis       → Upstash (TLS URL in .env)
+#
+# Images are built by GitHub Actions and pushed to ECR.
+# On EC2, .env must contain:
+#   ECR_REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com
+#
+# Local development: run `docker compose -f docker-compose.dev.yml up`
+
+services:
+
+  # ── Django application server ───────────────────────────────────────────────
+  web:
+    image: ${ECR_REGISTRY}/marketnoise-backend:latest
+    env_file: .env
+    volumes:
+      - staticfiles:/app/staticfiles
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/market/trending/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── Celery async worker ──────────────────────────────────────────────────────
+  celery-worker:
+    image: ${ECR_REGISTRY}/marketnoise-backend:latest
+    command: >
+      celery -A config worker
+      --loglevel=info
+      --concurrency=2
+    env_file: .env
+    restart: unless-stopped
+
+  # ── Celery periodic scheduler ────────────────────────────────────────────────
+  celery-beat:
+    image: ${ECR_REGISTRY}/marketnoise-backend:latest
+    command: >
+      celery -A config beat
+      --loglevel=info
+      --scheduler celery.beat:PersistentScheduler
+    env_file: .env
+    restart: unless-stopped
+
+  # ── Nginx: SPA + reverse proxy ───────────────────────────────────────────────
+  nginx:
+    image: ${ECR_REGISTRY}/marketnoise-nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - staticfiles:/app/staticfiles:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  staticfiles:

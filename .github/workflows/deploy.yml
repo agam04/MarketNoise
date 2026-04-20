@@ -1,0 +1,83 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Configure AWS credentials ────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ── 3. Login to Amazon ECR ───────────────────────────────────────────────
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── 4. Build & push backend image ───────────────────────────────────────
+      - name: Build and push backend image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG:    ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/marketnoise-backend:$IMAGE_TAG \
+                       -t $ECR_REGISTRY/marketnoise-backend:latest \
+                       ./backend
+          docker push $ECR_REGISTRY/marketnoise-backend:$IMAGE_TAG
+          docker push $ECR_REGISTRY/marketnoise-backend:latest
+
+      # ── 5. Build & push nginx+frontend image ────────────────────────────────
+      - name: Build and push nginx image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG:    ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/marketnoise-nginx:$IMAGE_TAG \
+                       -t $ECR_REGISTRY/marketnoise-nginx:latest \
+                       -f nginx/Dockerfile .
+          docker push $ECR_REGISTRY/marketnoise-nginx:$IMAGE_TAG
+          docker push $ECR_REGISTRY/marketnoise-nginx:latest
+
+      # ── 6. SSH into EC2 and deploy ───────────────────────────────────────────
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:        ${{ secrets.EC2_HOST }}
+          username:    ${{ secrets.EC2_USER }}
+          key:         ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            # Pull latest images from ECR
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | docker login --username AWS --password-stdin \
+                ${{ steps.ecr-login.outputs.registry }}
+
+            cd ~/marketnoise
+
+            # Update image tags in compose to use the pushed images
+            export ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+            export IMAGE_TAG=${{ github.sha }}
+
+            # Pull and restart with zero-downtime rolling update
+            docker compose pull
+            docker compose up -d --no-build
+
+            # Run Django migrations
+            docker compose exec -T web python manage.py migrate --noinput
+
+            # Remove dangling images to save disk space
+            docker image prune -f

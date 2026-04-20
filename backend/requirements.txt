@@ -8,6 +8,11 @@ djangorestframework-simplejwt>=5.3
 
 # Database
 psycopg2-binary>=2.9
+dj-database-url>=2.1
+
+# Production server & static files
+gunicorn>=21.0
+whitenoise>=6.6
 
 # Async Tasks
 celery>=5.3
@@ -22,7 +27,8 @@ elasticsearch>=8.0
 # NLP / Sentiment Analysis
 nltk>=3.8
 transformers>=4.40
-torch>=2.0
+# torch is installed separately in Dockerfile with CPU-only wheels
+# (keeps image ~400 MB instead of 2 GB)
 
 # Scrapers
 feedparser>=6.0
