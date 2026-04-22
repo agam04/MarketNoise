@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm install:*)",
-      "Bash(source:*)",
-      "Bash(python manage.py backfill_prices:*)"
-    ]
-  }
-}
