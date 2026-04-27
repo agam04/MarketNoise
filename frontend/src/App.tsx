@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, Component, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { GamificationProvider, useGamification } from './contexts/GamificationContext';
@@ -11,6 +11,32 @@ import SettingsPage from './pages/SettingsPage';
 import WatchlistPage from './pages/WatchlistPage';
 import XPToastContainer from './components/XPToast';
 import Confetti from './components/Confetti';
+
+// ─── Error Boundary ────────────────────────────────────────────────────────
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-surface-900 px-4 text-center">
+          <p className="text-4xl">⚠️</p>
+          <h2 className="text-xl font-bold text-white">Something went wrong</h2>
+          <p className="max-w-sm text-sm text-neutral-400">
+            {(this.state.error as Error).message || 'An unexpected error occurred.'}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-2 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            Reload page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /** Subtle green radial glow that follows the cursor — adds depth without distraction */
 function CursorSpotlight() {
@@ -55,6 +81,7 @@ function GamificationLayer() {
 export default function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <AuthProvider>
         <GamificationProvider>
           <div className="relative min-h-screen w-full overflow-x-hidden bg-surface-900 text-neutral-200">
@@ -74,6 +101,7 @@ export default function App() {
           </div>
         </GamificationProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

@@ -106,14 +106,27 @@ export interface TrendingItem {
   composite_score: number;
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export async function fetchAnalysis(
   ticker: string,
   companyName: string
 ): Promise<AnalysisResult> {
-  const res = await fetch(
-    `/api/market/analyze/${ticker}/?name=${encodeURIComponent(companyName)}`
+  const res = await fetchWithTimeout(
+    `/api/market/analyze/${ticker}/?name=${encodeURIComponent(companyName)}`,
+    45000
   );
   if (!res.ok) throw new Error(`Analysis failed: ${res.status}`);
   return await res.json();
@@ -137,7 +150,7 @@ export async function fetchTrending(): Promise<TrendingItem[]> {
 }
 
 export async function fetchDrift(ticker: string): Promise<DriftResult> {
-  const res = await fetch(`/api/market/drift/${ticker}/`);
+  const res = await fetchWithTimeout(`/api/market/drift/${ticker}/`, 30000);
   if (!res.ok) throw new Error(`Drift fetch failed: ${res.status}`);
   return await res.json();
 }
