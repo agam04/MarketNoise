@@ -61,3 +61,6 @@ coverage.xml
 
 # Claude Code settings
 .claude/
+
+# Claude context (local only)
+claudecontext.md

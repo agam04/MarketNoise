@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, RefreshCw, TrendingUp, Activity, Shield } from 'lucide-react';
+import { BarChart3, Zap, RefreshCw, TrendingUp, Activity, Shield } from 'lucide-react';
 import SearchBar from '../components/SearchBar';
 import DailyChallenge from '../components/DailyChallenge';
 import NarrativeFeedCard from '../components/NarrativeFeedCard';
@@ -9,7 +9,6 @@ import { fetchTrending, type TrendingItem } from '../services/analysisService';
 
 const POPULAR_TICKERS = ['AAPL', 'TSLA', 'NVDA', 'GME', 'META'];
 
-// ── Skeleton card for loading state ────────────────────────────────────────
 function FeedSkeleton() {
   return (
     <div
@@ -47,7 +46,6 @@ function FeedSkeleton() {
   );
 }
 
-// ── Empty state when no scraped data exists yet ────────────────────────────
 function FeedEmptyState({ onSearch }: { onSearch: (t: string) => void }) {
   return (
     <div
@@ -98,7 +96,12 @@ function FeedEmptyState({ onSearch }: { onSearch: (t: string) => void }) {
   );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────
+const FEATURES = [
+  { icon: TrendingUp, title: 'Sentiment',          description: 'FinBERT-scored news headlines — bullish, bearish, or mixed.' },
+  { icon: Activity,   title: 'Narrative Velocity', description: 'Detect attention spikes before they mislead you.' },
+  { icon: Shield,     title: 'Hype Detection',     description: 'Info-driven vs hype-driven coverage, scored 0–100.' },
+];
+
 export default function HomePage() {
   const navigate = useNavigate();
   const { gamificationEnabled } = useGamification();
@@ -121,49 +124,112 @@ export default function HomePage() {
     loadFeed();
   }, []);
 
-  const features = [
-    { icon: TrendingUp, title: 'Sentiment',        description: 'FinBERT-scored news headlines — bullish, bearish, or mixed.' },
-    { icon: Activity,   title: 'Narrative Velocity', description: 'Detect attention spikes before they mislead you.' },
-    { icon: Shield,     title: 'Hype Detection',   description: 'Info-driven vs hype-driven coverage, scored 0-100.' },
-  ];
-
   return (
-    <div>
+    <div className="flex min-h-[calc(100vh-4rem)] flex-col">
 
-      {/* ── Full-width hero — flush against navbar ──────────────────────── */}
-      <section
-        className="relative flex flex-col items-center overflow-hidden px-4 pb-12 pt-16 text-center"
-        style={{ borderBottom: '1px solid rgba(34,197,94,0.08)' }}
-      >
+      {/* ── Hero — vertically centered ──────────────────────────────────── */}
+      <section className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-4 py-24">
         {/* Background layers */}
-        <div className="pointer-events-none absolute inset-0 hero-grid opacity-50" />
+        <div className="pointer-events-none absolute inset-0 hero-grid" />
+        <div className="pointer-events-none absolute inset-0 hero-spotlight" />
         <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background: 'radial-gradient(ellipse 70% 100% at 50% 0%, rgba(34,197,94,0.06), transparent)',
-          }}
+          className="pointer-events-none absolute -left-32 top-1/4 h-64 w-64 rounded-full opacity-20"
+          style={{ background: 'radial-gradient(circle, #22c55e 0%, transparent 70%)', filter: 'blur(60px)' }}
+        />
+        <div
+          className="pointer-events-none absolute -right-32 bottom-1/4 h-48 w-48 rounded-full opacity-15"
+          style={{ background: 'radial-gradient(circle, #22c55e 0%, transparent 70%)', filter: 'blur(50px)' }}
         />
 
-        {/* Headline — value prop, not brand repeat */}
-        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-brand-500">
-          Real-time narrative intelligence
-        </p>
-        <h1 className="mb-4 text-4xl font-extrabold tracking-tight text-white sm:text-5xl">
-          Cut through the noise.
-        </h1>
-        <p className="mb-8 max-w-md text-sm leading-relaxed text-neutral-500">
-          Sentiment, velocity &amp; hype analysis for any US stock — powered by FinBERT.
-          Know if attention is information-driven or just noise.
-        </p>
+        {/* Logo + Wordmark */}
+        <div className="relative mb-8 flex flex-col items-center gap-5">
+          <div className="relative" style={{ animation: 'float 4s ease-in-out infinite' }}>
+            <div
+              className="absolute inset-0 rounded-2xl"
+              style={{
+                background: 'radial-gradient(circle, rgba(34,197,94,0.3), transparent)',
+                filter: 'blur(16px)',
+                animation: 'glow-pulse 3s ease-in-out infinite',
+              }}
+            />
+            <div
+              className="relative flex h-16 w-16 items-center justify-center rounded-2xl"
+              style={{
+                background: 'rgba(5,46,22,0.6)',
+                border: '1px solid rgba(34,197,94,0.3)',
+                boxShadow: '0 0 24px rgba(34,197,94,0.15)',
+              }}
+            >
+              <BarChart3 className="h-8 w-8 text-brand-400" />
+            </div>
+          </div>
+
+          <h1 className="text-5xl font-extrabold tracking-tight sm:text-6xl">
+            <span
+              style={{
+                background: 'linear-gradient(135deg, #4ade80 0%, #22c55e 60%, #16a34a 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
+              Market
+            </span>
+            <span
+              style={{
+                background: 'linear-gradient(135deg, #4ade80 0%, #22c55e 60%, #16a34a 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
+              Noise
+            </span>
+          </h1>
+        </div>
+
+        {/* Tagline */}
+        <div className="mb-10 text-center">
+          <p className="text-xl font-medium text-neutral-300 sm:text-2xl">
+            Cut through the noise.
+          </p>
+          <p className="mt-1 text-base text-neutral-500">
+            Sentiment, velocity &amp; hype analysis for any US stock — powered by FinBERT.
+          </p>
+        </div>
 
         {/* Search */}
-        <div className="relative z-10 w-full max-w-lg">
+        <div className="relative z-10 w-full max-w-xl">
           <SearchBar large />
         </div>
 
+        {/* Popular tickers */}
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+          <span className="text-xs text-neutral-600">Try:</span>
+          {POPULAR_TICKERS.map((t) => (
+            <button
+              key={t}
+              onClick={() => navigate(`/stock/${t}`)}
+              className="rounded-full px-3 py-1 text-xs font-medium text-neutral-400 transition-all duration-200 hover:text-brand-400"
+              style={{
+                background: 'rgba(26,26,26,0.8)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = 'rgba(34,197,94,0.4)';
+                (e.currentTarget as HTMLElement).style.boxShadow = '0 0 12px rgba(34,197,94,0.1)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.06)';
+                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
         {/* Feature pills */}
-        <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-          {features.map(({ icon: Icon, title, description }) => (
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {FEATURES.map(({ icon: Icon, title, description }) => (
             <div
               key={title}
               className="flex items-center gap-2 rounded-full px-3 py-1.5"
@@ -180,17 +246,17 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Daily Challenge — only shown when game mode is on ───────────── */}
+      {/* ── Daily Challenge ─────────────────────────────────────────────── */}
       {gamificationEnabled && (
-        <div className="mx-auto max-w-lg px-4 pt-8 sm:px-6">
-          <DailyChallenge />
-        </div>
+        <section className="w-full px-4 pb-8 sm:px-8 lg:px-12">
+          <div className="mx-auto max-w-lg">
+            <DailyChallenge />
+          </div>
+        </section>
       )}
 
       {/* ── Live narrative feed ─────────────────────────────────────────── */}
-      <div className="w-full px-4 pt-8 pb-10 sm:px-8 lg:px-12">
-      <section>
-        {/* Section header */}
+      <section className="w-full px-4 pb-20 sm:px-8 lg:px-12">
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
@@ -212,7 +278,6 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Refresh + last updated */}
           <div className="flex items-center gap-3">
             {lastUpdated && !loading && (
               <span className="text-[10px] text-white/20">
@@ -231,7 +296,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Feed grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {loading ? (
             Array.from({ length: 8 }).map((_, i) => <FeedSkeleton key={i} />)
@@ -244,7 +308,7 @@ export default function HomePage() {
           )}
         </div>
       </section>
-      </div>
+
     </div>
   );
 }

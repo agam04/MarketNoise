@@ -106,105 +106,90 @@ export default function StockPage() {
         </div>
       </div>
 
-      {/* Two-column layout: main content (2fr) + sticky chat sidebar (1fr) */}
-      <div className="lg:grid lg:grid-cols-[2fr_1fr] lg:gap-6 lg:items-start">
-
-        {/* ── Left column: all main content ──────────────────────────────── */}
-        <div className="min-w-0">
-          {/* Stock Header — glass container */}
-          <div
-            className="mb-6 flex items-start justify-between rounded-2xl p-5"
-            style={{
-              background: 'rgba(26,26,26,0.5)',
-              border: '1px solid rgba(255,255,255,0.05)',
-            }}
-          >
-            <div>
-              <div className="flex items-center gap-3">
-                <h1
-                  className="text-3xl font-extrabold tracking-tight text-white"
-                  style={{ textShadow: '0 0 30px rgba(255,255,255,0.08)' }}
-                >
-                  {ticker}
-                </h1>
-                <WatchButton ticker={ticker} />
-              </div>
-              <p className="mt-1 text-sm text-neutral-500">
-                {loading ? (
-                  <span className="skeleton inline-block h-4 w-40" />
-                ) : (
-                  companyName
-                )}
+      {/* Stock Header — full width, above the grid */}
+      <div
+        className="mb-6 flex items-start justify-between rounded-2xl p-5"
+        style={{
+          background: 'rgba(26,26,26,0.5)',
+          border: '1px solid rgba(255,255,255,0.05)',
+        }}
+      >
+        <div>
+          <div className="flex items-center gap-3">
+            <h1
+              className="text-3xl font-extrabold tracking-tight text-white"
+              style={{ textShadow: '0 0 30px rgba(255,255,255,0.08)' }}
+            >
+              {ticker}
+            </h1>
+            <WatchButton ticker={ticker} />
+          </div>
+          <p className="mt-1 text-sm text-neutral-500">
+            {loading ? (
+              <span className="skeleton inline-block h-4 w-40" />
+            ) : (
+              companyName
+            )}
+          </p>
+        </div>
+        <div className="text-right">
+          {loading ? (
+            <Loader2 className="ml-auto h-6 w-6 animate-spin text-brand-500" />
+          ) : displayPrice != null ? (
+            <>
+              <p className="text-3xl font-extrabold tabular-nums text-white">
+                ${displayPrice.toFixed(2)}
               </p>
-            </div>
-            <div className="text-right">
-              {loading ? (
-                <Loader2 className="ml-auto h-6 w-6 animate-spin text-brand-500" />
-              ) : displayPrice != null ? (
-                <>
-                  <p className="text-3xl font-extrabold tabular-nums text-white">
-                    ${displayPrice.toFixed(2)}
-                  </p>
-                  <div
-                    className={`mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${
-                      isPositive ? 'text-brand-400' : 'text-danger-400'
-                    }`}
-                    style={{
-                      background: isPositive ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                      border: isPositive ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(239,68,68,0.2)',
-                    }}
-                  >
-                    {isPositive ? (
-                      <TrendingUp className="h-3.5 w-3.5" />
-                    ) : (
-                      <TrendingDown className="h-3.5 w-3.5" />
-                    )}
-                    <span>
-                      {isPositive ? '+' : ''}{displayChange.toFixed(2)} ({isPositive ? '+' : ''}{displayChangePercent.toFixed(2)}%)
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-neutral-600">{rangeLabel}</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-2xl font-bold text-neutral-500">$ —</p>
-                  <p className="text-sm text-neutral-600">{error || 'Price unavailable'}</p>
-                </>
-              )}
-            </div>
-          </div>
+              <div
+                className={`mt-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${
+                  isPositive ? 'text-brand-400' : 'text-danger-400'
+                }`}
+                style={{
+                  background: isPositive ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                  border: isPositive ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(239,68,68,0.2)',
+                }}
+              >
+                {isPositive ? (
+                  <TrendingUp className="h-3.5 w-3.5" />
+                ) : (
+                  <TrendingDown className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {isPositive ? '+' : ''}{displayChange.toFixed(2)} ({isPositive ? '+' : ''}{displayChangePercent.toFixed(2)}%)
+                </span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-neutral-600">{rangeLabel}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-neutral-500">$ —</p>
+              <p className="text-sm text-neutral-600">{error || 'Price unavailable'}</p>
+            </>
+          )}
+        </div>
+      </div>
 
-          {/* Price Chart */}
-          <div className="mb-8">
-            <PriceChart ticker={ticker} initialPoints={chartPoints} initialLoading={loading} onRangeChange={handleRangeChange} />
-          </div>
-
-          {/* AI Narrative Summary */}
+      {/* 2-column layout: content left (2fr), chat sidebar right (1fr sticky) */}
+      <div className="flex flex-col gap-6 lg:grid lg:items-start lg:grid-cols-[2fr_1fr]">
+        {/* Left column: chart + narrative + analysis + news */}
+        <div className="flex flex-col gap-8">
+          <PriceChart ticker={ticker} initialPoints={chartPoints} initialLoading={loading} onRangeChange={handleRangeChange} />
           <NarrativeSummaryCard ticker={ticker} companyName={companyName} />
-
-          {/* Analysis Section */}
-          <div className="mb-8">
-            <AnalysisSection ticker={ticker} companyName={companyName} />
-          </div>
-
-          {/* Narrative Timeline */}
-          <div className="mb-8">
+          <AnalysisSection ticker={ticker} companyName={companyName} />
+          <div>
             <h2 className="mb-4 text-lg font-semibold text-white">
               Narrative Timeline —{' '}
               <span className="text-purple-400">{ticker}</span>
             </h2>
             <NarrativeTimeline ticker={ticker} />
           </div>
-
-          {/* News — full width in left column */}
           <NewsSection ticker={ticker} companyName={companyName} />
         </div>
 
-        {/* ── Right column: sticky chat sidebar ──────────────────────────── */}
-        <div className="mt-8 lg:mt-0 lg:sticky lg:top-20 lg:h-[calc(100vh-6rem)]">
+        {/* Right column: sticky chat panel — fills viewport height below navbar */}
+        <div className="sticky top-24 h-[calc(100vh-7rem)]">
           <ChatPanel ticker={ticker} companyName={companyName} />
         </div>
-
       </div>
     </div>
   );
