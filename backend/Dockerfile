@@ -19,6 +19,13 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 COPY . .
 
+# Pre-download FinBERT model weights at build time so the container never
+# downloads from HF Hub at runtime (avoids worker timeout on cold start)
+RUN python -c "\
+from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
+AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
+AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
+
 # Collect Django static files into /app/staticfiles
 RUN python manage.py collectstatic --noinput
 
