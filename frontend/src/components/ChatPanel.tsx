@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { generateId } from '../utils/constants';
 import { Send, MessageSquare, Bot, LogIn } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ChatMessage } from '../types/stock';
@@ -23,7 +24,7 @@ export default function ChatPanel({ ticker, companyName }: ChatPanelProps) {
     if (!question || isLoading) return;
 
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: 'user',
       content: question,
       timestamp: new Date(),
@@ -54,7 +55,7 @@ export default function ChatPanel({ ticker, companyName }: ChatPanelProps) {
     setMessages((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: generateId(),
         role: 'assistant',
         content,
         timestamp: new Date(),

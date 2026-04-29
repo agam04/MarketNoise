@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { generateId } from '../utils/constants';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -156,7 +157,7 @@ function reducer(state: GamificationState, action: GamificationAction): Gamifica
 
       const isNewStock = actionId === 'VIEW_STOCK' && ticker && !s.stocksViewed.includes(ticker);
       if (actionId === 'VIEW_STOCK' && !isNewStock && ticker) {
-        const toastId = crypto.randomUUID();
+        const toastId = generateId();
         return { ...s, xp: s.xp + 3, toasts: [...s.toasts, { id: toastId, amount: 3 }] };
       }
 
@@ -166,7 +167,7 @@ function reducer(state: GamificationState, action: GamificationAction): Gamifica
 
       const xpGained = XP_MAP[actionId];
       const newXp = s.xp + xpGained;
-      const toastId = crypto.randomUUID();
+      const toastId = generateId();
       s = { ...s, xp: newXp, toasts: [...s.toasts, { id: toastId, amount: xpGained }] };
 
       const missionId = MISSION_MAP[actionId];

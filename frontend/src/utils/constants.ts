@@ -33,3 +33,10 @@ export const STOCKS: Stock[] = [
 
 export const TIME_RANGES = ['1D', '7D', '1M', '3M'] as const;
 export type TimeRange = typeof TIME_RANGES[number];
+
+export function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
