@@ -1,4 +1,4 @@
-# MarketNoise
+# Market-Noise
 
 **A narrative analysis platform that helps retail investors distinguish meaningful market signals from hype-driven noise.**
 
