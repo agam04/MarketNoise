@@ -127,9 +127,25 @@ CELERY_REDIS_BACKEND_USE_SSL = CELERY_BROKER_USE_SSL
 
 # Celery Beat — periodic scraping schedule
 CELERY_BEAT_SCHEDULE = {
-    'scrape-all-stocks-every-30-min': {
-        'task': 'tasks.celery_tasks.scrape_all_stocks',
-        'schedule': 30 * 60,  # every 30 minutes
+    # RSS: free feeds, no quota — poll frequently
+    'rss-scrape': {
+        'task': 'tasks.celery_tasks.beat_rss',
+        'schedule': 5 * 60,      # every 5 minutes
+    },
+    # Reddit: rate-limited API but generous — moderate cadence
+    'reddit-scrape': {
+        'task': 'tasks.celery_tasks.beat_reddit',
+        'schedule': 15 * 60,     # every 15 minutes
+    },
+    # GNews: 100 req/day free tier — conserve by spreading across the hour
+    'gnews-scrape': {
+        'task': 'tasks.celery_tasks.beat_gnews',
+        'schedule': 60 * 60,     # every 60 minutes
+    },
+    # Yahoo Finance: no API key, no documented rate limit — between RSS and Reddit
+    'yahoo-scrape': {
+        'task': 'tasks.celery_tasks.beat_yahoo',
+        'schedule': 10 * 60,     # every 10 minutes
     },
 }
 

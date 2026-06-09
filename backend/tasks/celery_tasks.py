@@ -5,62 +5,130 @@ from celery import shared_task
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def scrape_all_sources(ticker: str):
-    """Scrape RSS, Reddit, and GNews for a single ticker."""
+def _run_scraper(scraper_cls, ticker: str, lookback_days: int = 1):
+    """Shared helper: run one scraper for a ticker, save narratives, queue price tracking."""
     from api.models import Stock, Narrative
-    from api.scrapers import RSSScraper, RedditScraper, GNewsScraper
+
+    ticker = ticker.upper()
+    stock, _ = Stock.objects.get_or_create(ticker=ticker, defaults={'name': ticker})
+
+    existing_ids = set(Narrative.objects.filter(stock=stock).values_list('id', flat=True))
+
+    try:
+        scraper = scraper_cls()
+        articles = scraper.fetch(stock, lookback_days=lookback_days)
+        saved = scraper.save_narratives(stock, articles)
+        logger.info(f"{scraper_cls.__name__}: {saved} new for {ticker} (lookback={lookback_days}d)")
+    except Exception as e:
+        logger.warning(f"{scraper_cls.__name__} error for {ticker}: {e}")
+        saved = 0
+
+    if saved:
+        # Queue FinBERT scoring on the 'sentiment' queue (solo-pool worker — no fork)
+        score_sentiment.apply_async(args=[ticker], queue='sentiment')
+        new_narratives = Narrative.objects.filter(stock=stock).exclude(id__in=existing_ids)
+        for narrative in new_narratives:
+            record_publish_price.delay(narrative.id)
+
+    return saved
+
+
+@shared_task(queue='sentiment')
+def score_sentiment(ticker: str):
+    """Run FinBERT sentiment scoring. Must run on a solo-pool worker to avoid fork+PyTorch crash."""
+    from api.models import Stock
     from api.analysis import ensure_sentiment_scores
 
     ticker = ticker.upper()
-    stock, _ = Stock.objects.get_or_create(
-        ticker=ticker, defaults={'name': ticker}
-    )
+    try:
+        stock = Stock.objects.get(ticker=ticker)
+        ensure_sentiment_scores(stock)
+        logger.info(f"Sentiment scored for {ticker}")
+    except Stock.DoesNotExist:
+        logger.warning(f"score_sentiment: stock {ticker} not found")
 
-    # Track narrative IDs before scraping to find new ones
-    existing_ids = set(
-        Narrative.objects.filter(stock=stock).values_list('id', flat=True)
-    )
 
-    scrapers = [RSSScraper(), RedditScraper(), GNewsScraper()]
-    total = 0
+@shared_task
+def scrape_rss(ticker: str, lookback_days: int = 1):
+    from api.scrapers import RSSScraper
+    return _run_scraper(RSSScraper, ticker, lookback_days)
 
-    for scraper in scrapers:
-        try:
-            articles = scraper.fetch(stock, lookback_days=1)
-            saved = scraper.save_narratives(stock, articles)
-            total += saved
-            logger.info(f"{scraper.__class__.__name__}: {saved} new for {ticker}")
-        except Exception as e:
-            logger.warning(f"{scraper.__class__.__name__} error for {ticker}: {e}")
 
-    # Auto-analyze sentiment on new narratives
-    scored = ensure_sentiment_scores(stock)
-    logger.info(f"Sentiment scored {scored} new narratives for {ticker}")
+@shared_task
+def scrape_reddit(ticker: str, lookback_days: int = 1):
+    from api.scrapers import RedditScraper
+    return _run_scraper(RedditScraper, ticker, lookback_days)
 
-    # Schedule price tracking for newly scraped narratives
-    new_narratives = Narrative.objects.filter(
-        stock=stock
-    ).exclude(id__in=existing_ids)
 
-    for narrative in new_narratives:
-        record_publish_price.delay(narrative.id)
+@shared_task
+def scrape_gnews(ticker: str, lookback_days: int = 1):
+    from api.scrapers import GNewsScraper
+    return _run_scraper(GNewsScraper, ticker, lookback_days)
 
-    return total
+
+@shared_task
+def scrape_yahoo(ticker: str, lookback_days: int = 1):
+    from api.scrapers import YahooFinanceScraper
+    return _run_scraper(YahooFinanceScraper, ticker, lookback_days)
+
+
+@shared_task
+def scrape_all_sources(ticker: str, lookback_days: int = 1):
+    """Run all scrapers for a single ticker."""
+    scrape_rss.delay(ticker, lookback_days)
+    scrape_reddit.delay(ticker, lookback_days)
+    scrape_gnews.delay(ticker, lookback_days)
+    scrape_yahoo.delay(ticker, lookback_days)
+
+
+# ── Per-scraper beat fans: each dispatches its own scraper to all active stocks ──
+
+@shared_task
+def beat_rss():
+    """Beat task: RSS every 5 min — free feeds, no rate limit."""
+    from api.models import Stock
+    tickers = list(Stock.objects.filter(is_active=True).values_list('ticker', flat=True))
+    logger.info(f"[RSS beat] scraping {len(tickers)} stocks")
+    for t in tickers:
+        scrape_rss.delay(t)
+
+
+@shared_task
+def beat_reddit():
+    """Beat task: Reddit every 15 min — generous rate limit but still throttled."""
+    from api.models import Stock
+    tickers = list(Stock.objects.filter(is_active=True).values_list('ticker', flat=True))
+    logger.info(f"[Reddit beat] scraping {len(tickers)} stocks")
+    for t in tickers:
+        scrape_reddit.delay(t)
+
+
+@shared_task
+def beat_gnews():
+    """Beat task: GNews every 60 min — 100 req/day free tier, must conserve."""
+    from api.models import Stock
+    tickers = list(Stock.objects.filter(is_active=True).values_list('ticker', flat=True))
+    logger.info(f"[GNews beat] scraping {len(tickers)} stocks")
+    for t in tickers:
+        scrape_gnews.delay(t)
+
+
+@shared_task
+def beat_yahoo():
+    """Beat task: Yahoo Finance every 10 min — no API key, no documented rate limit."""
+    from api.models import Stock
+    tickers = list(Stock.objects.filter(is_active=True).values_list('ticker', flat=True))
+    logger.info(f"[Yahoo beat] scraping {len(tickers)} stocks")
+    for t in tickers:
+        scrape_yahoo.delay(t)
 
 
 @shared_task
 def scrape_all_stocks():
-    """Periodic task: scrape all active stocks."""
-    from api.models import Stock
-
-    tickers = list(
-        Stock.objects.filter(is_active=True).values_list('ticker', flat=True)
-    )
-    logger.info(f"Scheduled scrape for {len(tickers)} stocks")
-
-    for ticker in tickers:
-        scrape_all_sources.delay(ticker)
+    """Legacy beat task: kept for compatibility, triggers all three scrapers."""
+    beat_rss.delay()
+    beat_reddit.delay()
+    beat_gnews.delay()
 
 
 @shared_task

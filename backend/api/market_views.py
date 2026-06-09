@@ -1,7 +1,10 @@
+import logging
 import os
 from datetime import datetime
 
 import requests as http
+
+logger = logging.getLogger(__name__)
 from django.core.cache import cache
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -141,7 +144,13 @@ def market_search(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def market_news(request, ticker):
-    """Proxy GNews search. Cached 15 min."""
+    """
+    Return latest news for a ticker, served from scraped Narrative DB records.
+    Falls back to GNews API if the DB has no articles yet.
+    Cached 5 min.
+    """
+    from .models import Stock, Narrative
+
     ticker = ticker.upper()
     company_name = request.query_params.get('name', ticker)
 
@@ -150,41 +159,80 @@ def market_news(request, ticker):
     if cached is not None:
         return Response(cached)
 
-    query = f'{ticker} OR "{company_name}" stock'
-    resp = http.get(
-        f'{GNEWS_BASE}/search',
-        params={'q': query, 'lang': 'en', 'max': 6, 'token': GNEWS_KEY},
-        timeout=10,
-    )
-    if not resp.ok:
-        return Response([])
+    # Serve from DB first — scrapers populate this, no API quota issues
+    try:
+        stock = Stock.objects.get(ticker=ticker)
+        narratives = (
+            Narrative.objects
+            .filter(stock=stock)
+            .order_by('-published_at')[:20]
+        )
+        if narratives.exists():
+            articles = [
+                {
+                    'id': f'news-{n.id}',
+                    'headline': n.title,
+                    'source': n.source_name or n.source,
+                    'timestamp': n.published_at.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'sentiment': 'neutral',
+                    'url': n.url or '',
+                }
+                for n in narratives
+            ]
+            cache.set(cache_key, articles, timeout=300)
+            return Response(articles)
+    except Stock.DoesNotExist:
+        pass
 
-    data = resp.json()
-    if not data.get('articles'):
-        return Response([])
+    # Fallback: GNews API (free tier has 12h delay — use only when DB is empty)
+    try:
+        query = f'{ticker} OR "{company_name}" stock'
+        resp = http.get(
+            f'{GNEWS_BASE}/search',
+            params={'q': query, 'lang': 'en', 'max': 6, 'token': GNEWS_KEY},
+            timeout=10,
+        )
+        if resp.ok:
+            data = resp.json()
+            raw = data.get('articles') or []
+            if raw:
+                articles = [
+                    {
+                        'id': f'news-{i}',
+                        'headline': a['title'],
+                        'source': a['source']['name'],
+                        'timestamp': a['publishedAt'],
+                        'sentiment': 'neutral',
+                        'url': a['url'],
+                    }
+                    for i, a in enumerate(raw)
+                ]
+                cache.set(cache_key, articles, timeout=300)
+                return Response(articles)
+    except Exception as e:
+        logger.warning(f"GNews fallback failed for {ticker}: {e}")
 
-    articles = [
-        {
-            'id': f'news-{i}',
-            'headline': a['title'],
-            'source': a['source']['name'],
-            'timestamp': a['publishedAt'],
-            'sentiment': 'neutral',
-            'url': a['url'],
-        }
-        for i, a in enumerate(data['articles'])
-    ]
-
-    cache.set(cache_key, articles, timeout=900)
-    return Response(articles)
+    return Response([])
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def market_analyze(request, ticker):
-    """Run full analysis pipeline: sentiment + velocity + hype + pattern. Cached 15 min."""
-    from .analysis import analyze_stock_sentiment, compute_velocity, compute_hype_score
+    """
+    Read analysis from DB and return immediately. Safe on low-RAM servers — no FinBERT inline.
+
+    On first search for a ticker:
+      1. Stock is created and marked is_active=True so beat tasks pick it up going forward.
+      2. Async scraping + FinBERT scoring is queued via Celery.
+      3. Empty/zero response is returned immediately; frontend shows "no data yet" state.
+
+    On subsequent calls (data exists in DB):
+      - Reads from SentimentScore / VelocityMetric / HypeScore tables directly.
+      - Result is cached 15 min.
+    """
+    from .analysis import read_sentiment_from_db, compute_velocity, compute_hype_score
     from .patterns import classify_pattern
+    from .models import Stock
 
     ticker = ticker.upper()
     company_name = request.query_params.get('name', ticker)
@@ -194,13 +242,30 @@ def market_analyze(request, ticker):
     if cached is not None:
         return Response(cached)
 
-    # Run pipeline in order: sentiment first (ingests articles), then velocity, then hype
-    sentiment = analyze_stock_sentiment(ticker, company_name)
+    # Ensure stock exists and is enrolled in the beat scraping schedule
+    stock, _ = Stock.objects.get_or_create(
+        ticker=ticker,
+        defaults={'name': company_name, 'is_active': True},
+    )
+    if not stock.is_active:
+        stock.is_active = True
+        stock.save(update_fields=['is_active'])
+
+    # Build response from existing DB rows — no FinBERT, no scraping inline
+    sentiment = read_sentiment_from_db(ticker)
     velocity  = compute_velocity(ticker)
     hype      = compute_hype_score(ticker)
+    pattern   = classify_pattern(sentiment, velocity, hype)
 
-    # Classify the narrative pattern from the composite signals
-    pattern = classify_pattern(sentiment, velocity, hype)
+    # If this stock has no data yet, kick off a 7-day backfill scrape asynchronously.
+    # Regular beat scrapes use 1 day, but first-time searches need history to be useful immediately.
+    if sentiment.get('article_count', 0) == 0:
+        try:
+            from tasks.celery_tasks import scrape_all_sources
+            scrape_all_sources.delay(ticker, lookback_days=7)
+            logger.info(f"Queued 7-day backfill scrape for new ticker {ticker}")
+        except Exception as e:
+            logger.warning(f"Could not queue scrape for {ticker}: {e}")
 
     result = {
         'sentiment': sentiment,
@@ -208,7 +273,9 @@ def market_analyze(request, ticker):
         'hype':      hype,
         'pattern':   pattern,
     }
-    cache.set(cache_key, result, timeout=900)
+    # Only cache when there's real data — don't cache empty responses
+    if sentiment.get('article_count', 0) > 0:
+        cache.set(cache_key, result, timeout=900)
     return Response(result)
 
 

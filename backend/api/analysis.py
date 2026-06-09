@@ -162,6 +162,75 @@ def ensure_sentiment_scores(stock: Stock) -> int:
     return created
 
 
+def read_sentiment_from_db(ticker: str) -> dict:
+    """
+    Read-only sentiment aggregation from existing SentimentScore rows.
+    No scraping, no FinBERT. Safe to call from a web request on low-RAM servers.
+    Returns the same shape as analyze_stock_sentiment().
+    """
+    ticker = ticker.upper()
+    DECAY_LAMBDA = math.log(2) / 3.0
+
+    try:
+        stock = Stock.objects.get(ticker=ticker)
+    except Stock.DoesNotExist:
+        return {
+            'ticker': ticker, 'label': 'neutral', 'compound': 0.0,
+            'positive': 0.0, 'negative': 0.0, 'neutral': 1.0,
+            'article_count': 0,
+            'explanation': f'No data for {ticker} yet — scraping in progress.',
+            'articles': [],
+        }
+
+    recent_scores = list(
+        SentimentScore.objects.filter(stock=stock)
+        .select_related('narrative')
+        .order_by('-analyzed_at')[:20]
+    )
+    count = len(recent_scores)
+
+    if count == 0:
+        return {
+            'ticker': ticker, 'label': 'neutral', 'compound': 0.0,
+            'positive': 0.0, 'negative': 0.0, 'neutral': 1.0,
+            'article_count': 0,
+            'explanation': f'No recent news articles found for {ticker} to analyze.',
+            'articles': [],
+        }
+
+    now = timezone.now()
+    weights = [math.exp(-DECAY_LAMBDA * max((now - s.analyzed_at).total_seconds() / 86400.0, 0))
+               for s in recent_scores]
+    total_weight = sum(weights) or 1.0
+
+    avg_compound = sum(s.compound_score * w for s, w in zip(recent_scores, weights)) / total_weight
+    avg_positive = sum(s.positive_score * w for s, w in zip(recent_scores, weights)) / total_weight
+    avg_negative = sum(s.negative_score * w for s, w in zip(recent_scores, weights)) / total_weight
+    avg_neutral  = sum(s.neutral_score  * w for s, w in zip(recent_scores, weights)) / total_weight
+
+    overall_label = _classify_label(avg_compound)
+    analyzed_articles = [
+        {
+            'title': s.narrative.title, 'source': s.narrative.source_name,
+            'label': s.label, 'compound': s.compound_score,
+            'positive': s.positive_score, 'negative': s.negative_score, 'neutral': s.neutral_score,
+        }
+        for s in recent_scores
+    ]
+
+    return {
+        'ticker': ticker,
+        'label': overall_label,
+        'compound': round(avg_compound, 3),
+        'positive': round(avg_positive, 3),
+        'negative': round(avg_negative, 3),
+        'neutral': round(avg_neutral, 3),
+        'article_count': count,
+        'explanation': _build_explanation(ticker, overall_label, avg_compound, analyzed_articles, count),
+        'articles': analyzed_articles,
+    }
+
+
 def analyze_stock_sentiment(ticker: str, company_name: str) -> dict:
     """
     Full sentiment analysis pipeline for a stock:
